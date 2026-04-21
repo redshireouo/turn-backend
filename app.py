@@ -6,6 +6,7 @@ from PIL import Image
 import io
 import shutil
 import uuid
+import traceback
 
 app = FastAPI()
 
@@ -29,7 +30,9 @@ model = None
 def get_model():
     global model
     if model is None:
+        print("Loading YOLO model...")
         model = YOLO(str(MODEL_PATH))
+        print("YOLO model loaded.")
     return model
 
 
@@ -47,74 +50,79 @@ def root_head():
 async def predict(video: UploadFile = File(...)):
     print("=== /predict called ===")
 
-    yolo_model = get_model()
+    try:
+        yolo_model = get_model()
 
-    file_id = str(uuid.uuid4())
-    save_path = UPLOAD_DIR / f"{file_id}_{video.filename}"
+        file_id = str(uuid.uuid4())
+        save_path = UPLOAD_DIR / f"{file_id}_{video.filename}"
 
-    # 儲存上傳影片
-    with open(save_path, "wb") as buffer:
-        shutil.copyfileobj(video.file, buffer)
+        with open(save_path, "wb") as buffer:
+            shutil.copyfileobj(video.file, buffer)
 
-    print(f"saved video: {save_path}")
+        print(f"saved video: {save_path}")
 
-    # 影片推論：先不要輸出結果影片，先求雲端穩定
-    results = yolo_model.predict(
-        source=str(save_path),
-        conf=0.25,
-        iou=0.45,
-        imgsz=640,
-        save=False,
-        verbose=False,
-        stream=True
-    )
+        results = yolo_model.predict(
+            source=str(save_path),
+            conf=0.25,
+            iou=0.45,
+            imgsz=416,
+            save=False,
+            verbose=False,
+            stream=True,
+            device="cpu",
+            max_det=10,
+        )
 
-    has_sign = False
-    has_square = False
-    detections = []
+        has_sign = False
+        has_square = False
+        detections = []
 
-    for frame_idx, result in enumerate(results):
-        if result.boxes is None or len(result.boxes) == 0:
-            continue
+        for frame_idx, result in enumerate(results):
+            if result.boxes is None or len(result.boxes) == 0:
+                continue
 
-        for box in result.boxes:
-            cls_id = int(box.cls[0].item())
-            conf = float(box.conf[0].item())
-            class_name = yolo_model.names[cls_id]
+            for box in result.boxes:
+                cls_id = int(box.cls[0].item())
+                conf = float(box.conf[0].item())
+                class_name = yolo_model.names[cls_id]
 
-            if class_name == "sign":
-                has_sign = True
-            elif class_name == "square":
-                has_square = True
+                if class_name == "sign":
+                    has_sign = True
+                elif class_name == "square":
+                    has_square = True
 
-            detections.append({
-                "frame": frame_idx,
-                "class": class_name,
-                "confidence": round(conf, 3)
-            })
+                detections.append({
+                    "frame": frame_idx,
+                    "class": class_name,
+                    "confidence": round(conf, 3)
+                })
 
-    announcement = ""
-    if has_sign:
-        announcement = "前方有待轉牌，要待轉"
-    elif has_square:
-        announcement = "前方有待轉格，可能要待轉"
+        announcement = ""
+        if has_sign:
+            announcement = "前方有待轉牌，要待轉"
+        elif has_square:
+            announcement = "前方有待轉格，可能要待轉"
 
-    print("predict finished successfully")
-    print("has_sign:", has_sign, "has_square:", has_square, "detections:", len(detections))
+        print("predict finished successfully")
+        print("has_sign:", has_sign, "has_square:", has_square, "detections:", len(detections))
 
-    return {
-        "has_sign": has_sign,
-        "has_square": has_square,
-        "announcement": announcement,
-        "output_video_url": None,
-        "detections": detections[:50]
-    }
+        return {
+            "has_sign": has_sign,
+            "has_square": has_square,
+            "announcement": announcement,
+            "output_video_url": None,
+            "detections": detections[:50]
+        }
+
+    except Exception as e:
+        print("predict failed")
+        print("error:", repr(e))
+        traceback.print_exc()
+        raise e
 
 
 @app.post("/predict-frame")
 async def predict_frame(image: UploadFile = File(...)):
-    import traceback
-
     print("=== /predict-frame called ===")
 
     try:
@@ -123,7 +131,7 @@ async def predict_frame(image: UploadFile = File(...)):
         image_bytes = await image.read()
         pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        # 降低 Render 壓力
+        # 降低圖片大小，讓推論更穩
         pil_image.thumbnail((512, 512))
         print("image size after thumbnail:", pil_image.size)
 
@@ -135,7 +143,7 @@ async def predict_frame(image: UploadFile = File(...)):
             save=False,
             verbose=False,
             device="cpu",
-            max_det=5
+            max_det=5,
         )
 
         has_sign = False

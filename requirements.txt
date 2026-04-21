@@ -3,5 +3,4 @@ uvicorn
 python-multipart
 ultralytics
 opencv-python
-imageio-ffmpeg
 pillow
