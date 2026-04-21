@@ -123,20 +123,19 @@ async def predict_frame(image: UploadFile = File(...)):
         image_bytes = await image.read()
         pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        # 先縮小圖片，減少 Render 壓力
-        pil_image.thumbnail((640, 640))
-
+        # 降低 Render 壓力
+        pil_image.thumbnail((512, 512))
         print("image size after thumbnail:", pil_image.size)
 
         results = yolo_model.predict(
             source=pil_image,
             conf=0.25,
             iou=0.45,
-            imgsz=416,
+            imgsz=320,
             save=False,
             verbose=False,
             device="cpu",
-            max_det=10
+            max_det=5
         )
 
         has_sign = False
