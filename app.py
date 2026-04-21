@@ -113,57 +113,73 @@ async def predict(video: UploadFile = File(...)):
 
 @app.post("/predict-frame")
 async def predict_frame(image: UploadFile = File(...)):
+    import traceback
+
     print("=== /predict-frame called ===")
 
-    yolo_model = get_model()
+    try:
+        yolo_model = get_model()
 
-    image_bytes = await image.read()
-    pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        image_bytes = await image.read()
+        pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-    results = yolo_model.predict(
-        source=pil_image,
-        conf=0.25,
-        iou=0.45,
-        imgsz=640,
-        save=False,
-        verbose=False
-    )
+        # 先縮小圖片，減少 Render 壓力
+        pil_image.thumbnail((640, 640))
 
-    has_sign = False
-    has_square = False
-    detections = []
+        print("image size after thumbnail:", pil_image.size)
 
-    for result in results:
-        if result.boxes is None or len(result.boxes) == 0:
-            continue
+        results = yolo_model.predict(
+            source=pil_image,
+            conf=0.25,
+            iou=0.45,
+            imgsz=416,
+            save=False,
+            verbose=False,
+            device="cpu",
+            max_det=10
+        )
 
-        for box in result.boxes:
-            cls_id = int(box.cls[0].item())
-            conf = float(box.conf[0].item())
-            class_name = yolo_model.names[cls_id]
+        has_sign = False
+        has_square = False
+        detections = []
 
-            if class_name == "sign":
-                has_sign = True
-            elif class_name == "square":
-                has_square = True
+        for result in results:
+            if result.boxes is None or len(result.boxes) == 0:
+                continue
 
-            detections.append({
-                "class": class_name,
-                "confidence": round(conf, 3)
-            })
+            for box in result.boxes:
+                cls_id = int(box.cls[0].item())
+                conf = float(box.conf[0].item())
+                class_name = yolo_model.names[cls_id]
 
-    announcement = ""
-    if has_sign:
-        announcement = "前方有待轉牌，要待轉"
-    elif has_square:
-        announcement = "前方有待轉格，可能要待轉"
+                if class_name == "sign":
+                    has_sign = True
+                elif class_name == "square":
+                    has_square = True
 
-    print("predict-frame finished successfully")
-    print("has_sign:", has_sign, "has_square:", has_square, "detections:", len(detections))
+                detections.append({
+                    "class": class_name,
+                    "confidence": round(conf, 3)
+                })
 
-    return {
-        "has_sign": has_sign,
-        "has_square": has_square,
-        "announcement": announcement,
-        "detections": detections
-    }
+        announcement = ""
+        if has_sign:
+            announcement = "前方有待轉牌，要待轉"
+        elif has_square:
+            announcement = "前方有待轉格，可能要待轉"
+
+        print("predict-frame finished successfully")
+        print("has_sign:", has_sign, "has_square:", has_square, "detections:", len(detections))
+
+        return {
+            "has_sign": has_sign,
+            "has_square": has_square,
+            "announcement": announcement,
+            "detections": detections
+        }
+
+    except Exception as e:
+        print("predict-frame failed")
+        print("error:", repr(e))
+        traceback.print_exc()
+        raise e
