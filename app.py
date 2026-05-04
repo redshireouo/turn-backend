@@ -131,8 +131,8 @@ async def predict_frame(image: UploadFile = File(...)):
         image_bytes = await image.read()
         pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        # 降低圖片大小，讓推論更穩
         pil_image.thumbnail((512, 512))
+        analysis_width, analysis_height = pil_image.size
         print("image size after thumbnail:", pil_image.size)
 
         results = yolo_model.predict(
@@ -159,6 +159,8 @@ async def predict_frame(image: UploadFile = File(...)):
                 conf = float(box.conf[0].item())
                 class_name = yolo_model.names[cls_id]
 
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+
                 if class_name == "sign":
                     has_sign = True
                 elif class_name == "square":
@@ -166,7 +168,13 @@ async def predict_frame(image: UploadFile = File(...)):
 
                 detections.append({
                     "class": class_name,
-                    "confidence": round(conf, 3)
+                    "confidence": round(conf, 3),
+                    "bbox": {
+                        "x1": round(x1, 1),
+                        "y1": round(y1, 1),
+                        "x2": round(x2, 1),
+                        "y2": round(y2, 1),
+                    }
                 })
 
         announcement = ""
@@ -175,13 +183,14 @@ async def predict_frame(image: UploadFile = File(...)):
         elif has_square:
             announcement = "前方有待轉格，可能要待轉"
 
-        print("predict-frame finished successfully")
-        print("has_sign:", has_sign, "has_square:", has_square, "detections:", len(detections))
-
         return {
             "has_sign": has_sign,
             "has_square": has_square,
             "announcement": announcement,
+            "image_size": {
+                "width": analysis_width,
+                "height": analysis_height
+            },
             "detections": detections
         }
 
